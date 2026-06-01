@@ -1,0 +1,25 @@
+{
+  "prompt": "A cinematic and ultra-realistic scene of Indian astronauts landing on Mars for the first time. The astronauts are wearing advanced futuristic ISRO space suits with Indian flag patches and ISRO logos. One astronaut is stepping onto the red Martian surface from a sleek futuristic lander while another plants the Indian flag into the ground. Mars landscape features red dust, rocky terrain, dramatic cliffs, distant mountains, and a glowing sunrise over the horizon. A high-tech Indian Mars habitat and rover are visible in the background. The atmosphere is epic, inspirational, and historic, with detailed textures, realistic lighting, volumetric dust, and cinematic composition. Style inspired by high-budget sci-fi space exploration films, ultra-detailed, 8k, photorealistic.",
+  "negative_prompt": "cartoon, low quality, blurry, distorted anatomy, extra limbs, text, watermark, logo artifacts, low resolution, oversaturated colors, unrealistic physics",
+  "style": "photorealistic cinematic sci-fi",
+  "aspect_ratio": "16:9",
+  "resolution": "3840x2160",
+  "lighting": "golden sunrise with cinematic shadows",
+  "camera": {
+    "angle": "wide-angle low perspective",
+    "lens": "35mm cinematic lens",
+    "depth_of_field": "medium"
+  },
+  "color_palette": [
+    "deep red",
+    "burnt orange",
+    "gold",
+    "metallic silver",
+    "dark space blue"
+  ],
+  "render_settings": {
+    "quality": "ultra",
+    "detail_level": "high",
+    "sharpness": "high"
+  }
+}

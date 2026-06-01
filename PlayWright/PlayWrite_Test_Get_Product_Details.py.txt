@@ -1,0 +1,44 @@
+from playwright.sync_api import sync_playwright
+import time
+
+with sync_playwright() as p:
+
+    # Launch browser
+    browser = p.chromium.launch(
+        headless=False,
+        slow_mo=500
+    )
+
+    # Open new page
+    page = browser.new_page()
+
+    # Open Amazon Sale page
+    page.goto(
+        "https://www.amazon.in/events/greatsummersale?ref_=nav_cs_gb&promotionsSearchLastSeenAsin=B0BTTNR391&promotionsSearchStartIndex=0&promotionsSearchPageSize=60",
+        timeout=60000
+    )
+
+    print("Status: Amazon page opened")
+
+    # Wait for products to load
+    page.wait_for_timeout(8000)
+
+    # Get product titles
+    products = page.locator("span.a-truncate-full")
+
+    # Count products
+    count = products.count()
+
+    print(f"\nTotal Products Found: {count}\n")
+
+    # Print first 10 products
+    for i in range(min(count, 10)):
+
+        product_name = products.nth(i).inner_text()
+
+        print(f"{i+1}. {product_name}")
+
+    print("\nStatus: Product extraction completed")
+
+    # Keep browser open
+    time.sleep(300)

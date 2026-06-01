@@ -1,0 +1,86 @@
+{
+  "title": "Thiruvalluvar Reciting the First Thirukkural",
+  "scene_description": "An ancient Tamil setting at sunrise with Thiruvalluvar seated peacefully on a traditional stone platform surrounded by palm-leaf manuscripts. He has a long beard, traditional white attire, sacred thread, and a calm wise expression. Gentle wind moves the cloth and nearby palm trees. Oil lamps glow softly around him. The atmosphere is spiritual, cinematic, and culturally authentic.",
+  "character": {
+    "name": "Thiruvalluvar",
+    "appearance": {
+      "age": "elderly sage",
+      "beard": "long white beard",
+      "hair": "tied traditional hair bun",
+      "clothing": "traditional white Tamil attire with shawl",
+      "accessories": [
+        "rudraksha beads",
+        "palm-leaf manuscript"
+      ]
+    },
+    "expression": "wise, calm, divine presence"
+  },
+  "action": {
+    "primary_action": "Thiruvalluvar slowly opens a palm-leaf manuscript and recites the first Thirukkural while looking toward the horizon",
+    "secondary_actions": [
+      "gentle hand gestures while speaking",
+      "soft breeze moving garments",
+      "birds flying in the background"
+    ]
+  },
+  "dialogue": {
+    "language": "Tamil",
+    "text": "அகர முதல எழுத்தெல்லாம் ஆதி பகவன் முதற்றே உலகு",
+    "voice_style": "deep, calm, wise, ancient Tamil sage voice",
+    "subtitles": {
+      "enabled": true,
+      "language": "Tamil"
+    }
+  },
+  "camera": {
+    "shots": [
+      {
+        "type": "wide cinematic opening shot",
+        "duration_seconds": 4
+      },
+      {
+        "type": "slow medium zoom toward Thiruvalluvar",
+        "duration_seconds": 6
+      },
+      {
+        "type": "close-up during dialogue delivery",
+        "duration_seconds": 5
+      }
+    ],
+    "movement": "slow cinematic dolly movement",
+    "frame_rate": 24
+  },
+  "environment": {
+    "location": "ancient Tamil Nadu hermitage",
+    "time_of_day": "sunrise",
+    "weather": "clear with soft mist",
+    "lighting": "warm golden cinematic lighting"
+  },
+  "audio": {
+    "background_music": "soft traditional Tamil veena and flute",
+    "ambient_sounds": [
+      "birds chirping",
+      "gentle wind",
+      "temple bell in distance"
+    ]
+  },
+  "visual_style": {
+    "style": "ultra realistic cinematic historical drama",
+    "color_tone": "warm earthy tones",
+    "quality": "8k",
+    "mood": "spiritual, inspirational, timeless"
+  },
+  "duration_seconds": 15,
+  "aspect_ratio": "16:9",
+  "negative_prompt": [
+    "cartoon",
+    "modern clothing",
+    "low quality",
+    "blurry face",
+    "sci-fi elements",
+    "incorrect Tamil culture",
+    "distorted anatomy",
+    "watermark",
+    "text artifacts"
+  ]
+}
