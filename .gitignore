@@ -1,6 +1,19 @@
-venv/
-venv311/
-.venv/
+# Python cache
 __pycache__/
 *.pyc
+
+# Environments
+venv/
 .env
+
+# Output files
+*.xlsx
+*.csv
+*.zip
+*.jpg
+*.png
+*.docx
+*.log
+
+# OS files
+.DS_Store
