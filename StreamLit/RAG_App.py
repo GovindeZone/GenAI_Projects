@@ -2,7 +2,7 @@ import os
 import tempfile
 import streamlit as st
 from pathlib import Path
-import anthropic
+from groq import Groq
 
 from langchain_community.document_loaders import (
     PyPDFLoader,
@@ -13,66 +13,20 @@ from langchain_community.document_loaders import (
 from langchain_community.document_loaders import UnstructuredExcelLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
-from langchain_community.embeddings import HuggingFaceEmbeddings
 
-# ── Page config ──────────────────────────────────────────────────────────────
+# ── CONFIG ────────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="Document Q&A",
-    page_icon="📄",
+    page_title="Policy Reader",
+    page_icon="📘",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-# ── Custom CSS ────────────────────────────────────────────────────────────────
-st.markdown(
-    """
-    <style>
-    .main-header {
-        font-size: 2.2rem;
-        font-weight: 700;
-        color: #1a1a2e;
-        margin-bottom: 0.2rem;
-    }
-    .sub-header {
-        font-size: 1rem;
-        color: #555;
-        margin-bottom: 1.5rem;
-    }
-    .mode-card {
-        background: #f8f9fa;
-        border-left: 4px solid #4f8ef7;
-        padding: 0.8rem 1rem;
-        border-radius: 6px;
-        margin-bottom: 1rem;
-        font-size: 0.9rem;
-    }
-    .answer-box {
-        background: #ffffff;
-        border: 1px solid #e0e0e0;
-        border-radius: 10px;
-        padding: 1.2rem 1.5rem;
-        line-height: 1.7;
-    }
-    .source-tag {
-        display: inline-block;
-        background: #e8f0fe;
-        color: #1967d2;
-        border-radius: 4px;
-        padding: 2px 8px;
-        font-size: 0.78rem;
-        margin: 2px;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
-# ── Constants ─────────────────────────────────────────────────────────────────
 CHUNK_SIZE = 800
 CHUNK_OVERLAP = 100
 TOP_K = 5
 EMBEDDING_MODEL = "all-MiniLM-L6-v2"
-CLAUDE_MODEL = "claude-opus-4-8"
+GROQ_MODEL = "llama-3.1-8b-instant"
 
 SUPPORTED_TYPES = {
     "pdf": "application/pdf",
@@ -83,23 +37,38 @@ SUPPORTED_TYPES = {
     "csv": "text/csv",
 }
 
+# ── HEADER ────────────────────────────────────────────────────────────────
+st.markdown(
+    "<h1 style='text-align:center;'>📘 Policy Reader / Document Reader</h1>",
+    unsafe_allow_html=True
+)
+st.markdown("---")
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
 
+# ── EMBEDDINGS (LAZY LOADED - SPEED FIX) ──────────────────────────────────
 @st.cache_resource(show_spinner=False)
 def get_embeddings():
+    from langchain_community.embeddings import HuggingFaceEmbeddings
     return HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
 
 
+# ── LOAD FILES ─────────────────────────────────────────────────────────────
+@st.cache_data(show_spinner=False)
+def cached_tmp_file(file_bytes: bytes, filename: str):
+    suffix = Path(filename).suffix
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        tmp.write(file_bytes)
+        return tmp.name
+
+
 def load_documents(uploaded_files):
-    """Load all uploaded files and return LangChain Document objects."""
     docs = []
     errors = []
+
     for uf in uploaded_files:
+        tmp_path = cached_tmp_file(uf.getvalue(), uf.name)
         ext = Path(uf.name).suffix.lower().lstrip(".")
-        with tempfile.NamedTemporaryFile(delete=False, suffix=f".{ext}") as tmp:
-            tmp.write(uf.getbuffer())
-            tmp_path = tmp.name
+
         try:
             if ext == "pdf":
                 loader = PyPDFLoader(tmp_path)
@@ -112,237 +81,176 @@ def load_documents(uploaded_files):
             elif ext == "csv":
                 loader = CSVLoader(tmp_path, encoding="utf-8")
             else:
-                errors.append(f"Unsupported file type: {uf.name}")
+                errors.append(f"Unsupported file: {uf.name}")
                 continue
+
             loaded = loader.load()
-            # Tag each chunk with its source filename
-            for doc in loaded:
-                doc.metadata["source_file"] = uf.name
+
+            for d in loaded:
+                d.metadata["source_file"] = uf.name
+
             docs.extend(loaded)
+
         except Exception as e:
             errors.append(f"Error loading {uf.name}: {e}")
+
         finally:
-            os.unlink(tmp_path)
+            try:
+                os.unlink(tmp_path)
+            except:
+                pass
+
     return docs, errors
 
 
+# ── VECTOR STORE ───────────────────────────────────────────────────────────
 def build_vectorstore(docs):
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP
+        chunk_size=CHUNK_SIZE,
+        chunk_overlap=CHUNK_OVERLAP
     )
+
     chunks = splitter.split_documents(docs)
     embeddings = get_embeddings()
+
     vectorstore = FAISS.from_documents(chunks, embeddings)
     return vectorstore, len(chunks)
 
 
 def retrieve_context(vectorstore, question):
     results = vectorstore.similarity_search(question, k=TOP_K)
-    context_parts = []
+
+    context = []
     sources = set()
+
     for r in results:
-        context_parts.append(r.page_content)
+        context.append(r.page_content)
         sources.add(r.metadata.get("source_file", "unknown"))
-    return "\n\n---\n\n".join(context_parts), list(sources)
+
+    return "\n\n---\n\n".join(context), list(sources)
 
 
-def ask_claude(question: str, context: str, mode: str) -> str:
-    api_key = st.session_state.get("api_key") or os.environ.get("ANTHROPIC_API_KEY", "")
+# ── GROQ LLM ───────────────────────────────────────────────────────────────
+def ask_groq(question, context, mode):
+    api_key = st.session_state.get("api_key") or os.environ.get("GROQ_API_KEY", "")
+
     if not api_key:
-        return "⚠️ Please enter your Anthropic API key in the sidebar."
+        return "⚠️ Please enter Groq API key in sidebar."
 
-    client = anthropic.Anthropic(api_key=api_key)
+    client = Groq(api_key=api_key)
 
     if mode == "document_only":
         system_prompt = (
-            "You are a precise document assistant. Answer the user's question "
-            "using ONLY the information provided in the DOCUMENT CONTEXT below. "
-            "If the answer is not found in the context, say: "
-            "'This information is not available in the provided documents.' "
-            "Do not use any outside knowledge."
+            "Answer ONLY from document context. "
+            "If not found say: 'Not available in documents.'"
         )
-    else:  # enhanced
+    else:
         system_prompt = (
-            "You are a knowledgeable assistant. First answer the user's question "
-            "using the DOCUMENT CONTEXT provided. Then, if helpful, supplement "
-            "with relevant general knowledge to give a more complete and insightful answer. "
-            "Clearly distinguish between what comes from the documents and what is general knowledge."
+            "Use document context first, then general knowledge if needed."
         )
 
-    user_message = f"""DOCUMENT CONTEXT:
-{context}
-
-USER QUESTION:
-{question}"""
-
-    response = client.messages.create(
-        model=CLAUDE_MODEL,
+    response = client.chat.completions.create(
+        model=GROQ_MODEL,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {
+                "role": "user",
+                "content": f"CONTEXT:\n{context}\n\nQUESTION:\n{question}"
+            },
+        ],
+        temperature=0.2,
         max_tokens=2048,
-        thinking={"type": "adaptive"},
-        system=system_prompt,
-        messages=[{"role": "user", "content": user_message}],
     )
 
-    # Extract text blocks only (skip thinking blocks)
-    answer_parts = [
-        block.text for block in response.content if block.type == "text"
-    ]
-    return "\n".join(answer_parts)
+    return response.choices[0].message.content
 
 
-# ── Session state init ────────────────────────────────────────────────────────
+# ── SESSION STATE ──────────────────────────────────────────────────────────
 if "vectorstore" not in st.session_state:
     st.session_state.vectorstore = None
-if "file_names" not in st.session_state:
-    st.session_state.file_names = []
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = []
+if "chat" not in st.session_state:
+    st.session_state.chat = []
 
 
-# ── Sidebar ───────────────────────────────────────────────────────────────────
+# ── SIDEBAR ───────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.markdown("## ⚙️ Configuration")
+    st.header("⚙️ Settings")
 
     api_key = st.text_input(
-        "Anthropic API Key",
+        "Groq API Key",
         type="password",
-        value=st.session_state.get("api_key", ""),
-        placeholder="sk-ant-...",
-        help="Your Anthropic API key. Never stored permanently.",
+        value=st.session_state.get("api_key", "")
     )
     if api_key:
         st.session_state.api_key = api_key
 
     st.divider()
-    st.markdown("## 📂 Upload Documents")
+
+    st.header("📂 Upload Docs")
+
     uploaded_files = st.file_uploader(
-        "Drag & drop or browse",
+        "Upload files",
         type=list(SUPPORTED_TYPES.keys()),
-        accept_multiple_files=True,
-        label_visibility="collapsed",
+        accept_multiple_files=True
     )
 
     if uploaded_files:
-        if st.button("📥 Process Documents", use_container_width=True, type="primary"):
-            with st.spinner("Loading and indexing documents…"):
+        if st.button("Process Documents"):
+            with st.spinner("Processing..."):
                 docs, errors = load_documents(uploaded_files)
+
                 if errors:
                     for e in errors:
                         st.error(e)
+
                 if docs:
-                    vs, n_chunks = build_vectorstore(docs)
+                    vs, n = build_vectorstore(docs)
                     st.session_state.vectorstore = vs
-                    st.session_state.file_names = [f.name for f in uploaded_files]
-                    st.session_state.chat_history = []
-                    st.success(f"✅ Indexed {len(docs)} pages → {n_chunks} chunks")
-                else:
-                    st.error("No documents could be loaded.")
-
-    if st.session_state.file_names:
-        st.divider()
-        st.markdown("**Loaded files:**")
-        for fn in st.session_state.file_names:
-            st.markdown(f"- 📎 `{fn}`")
-
-    if st.session_state.vectorstore and st.button(
-        "🗑️ Clear Documents", use_container_width=True
-    ):
-        st.session_state.vectorstore = None
-        st.session_state.file_names = []
-        st.session_state.chat_history = []
-        st.rerun()
-
-    st.divider()
-    st.markdown(
-        "<small>Supported: PDF · XLSX · XLS · DOCX · TXT · CSV</small>",
-        unsafe_allow_html=True,
-    )
+                    st.session_state.chat = []
+                    st.success(f"Indexed {len(docs)} docs → {n} chunks")
 
 
-# ── Main area ─────────────────────────────────────────────────────────────────
-st.markdown('<p class="main-header">📄 Document Q&A</p>', unsafe_allow_html=True)
-st.markdown(
-    '<p class="sub-header">Ask questions about your uploaded documents — choose how deep the answer goes.</p>',
-    unsafe_allow_html=True,
+    if st.session_state.vectorstore:
+        if st.button("Clear"):
+            st.session_state.vectorstore = None
+            st.session_state.chat = []
+            st.rerun()
+
+
+# ── MAIN UI ────────────────────────────────────────────────────────────────
+mode = st.radio(
+    "Answer Mode",
+    ["document_only", "enhanced"],
+    horizontal=True
 )
 
-# Answer mode selector
-col1, col2 = st.columns(2)
-with col1:
-    st.markdown(
-        '<div class="mode-card"><b>📋 Document Only</b><br>'
-        "Answers strictly from your uploaded files. No outside knowledge added.</div>",
-        unsafe_allow_html=True,
-    )
-with col2:
-    st.markdown(
-        '<div class="mode-card" style="border-color:#34a853"><b>🌐 Enhanced Context</b><br>'
-        "Document content + relevant general knowledge for a richer answer.</div>",
-        unsafe_allow_html=True,
-    )
-
-answer_mode = st.radio(
-    "Answer mode",
-    options=["document_only", "enhanced"],
-    format_func=lambda x: "📋 Document Only" if x == "document_only" else "🌐 Enhanced Context",
-    horizontal=True,
-    label_visibility="collapsed",
-)
-
-st.divider()
-
-# Chat history display
-for entry in st.session_state.chat_history:
+# Chat history
+for c in st.session_state.chat:
     with st.chat_message("user"):
-        st.write(entry["question"])
+        st.write(c["q"])
     with st.chat_message("assistant"):
-        st.markdown(
-            f'<div class="answer-box">{entry["answer"]}</div>', unsafe_allow_html=True
-        )
-        if entry.get("sources"):
-            st.markdown(
-                "**Sources:** "
-                + " ".join(
-                    f'<span class="source-tag">{s}</span>' for s in entry["sources"]
-                ),
-                unsafe_allow_html=True,
-            )
+        st.write(c["a"])
 
-# Question input
-question = st.chat_input(
-    "Ask a question about your documents…"
-    if st.session_state.vectorstore
-    else "Upload and process documents first, then ask a question…"
-)
 
-if question:
+# Input
+q = st.chat_input("Ask your question...")
+
+if q:
     if not st.session_state.vectorstore:
-        st.warning("Please upload and process at least one document first.")
-    elif not (st.session_state.get("api_key") or os.environ.get("ANTHROPIC_API_KEY")):
-        st.warning("Please enter your Anthropic API key in the sidebar.")
+        st.warning("Upload documents first.")
     else:
         with st.chat_message("user"):
-            st.write(question)
+            st.write(q)
+
+        context, sources = retrieve_context(
+            st.session_state.vectorstore, q
+        )
+
+        answer = ask_groq(q, context, mode)
 
         with st.chat_message("assistant"):
-            with st.spinner("Searching documents and generating answer…"):
-                context, sources = retrieve_context(
-                    st.session_state.vectorstore, question
-                )
-                answer = ask_claude(question, context, answer_mode)
+            st.write(answer)
 
-            st.markdown(
-                f'<div class="answer-box">{answer}</div>', unsafe_allow_html=True
-            )
-            if sources:
-                st.markdown(
-                    "**Sources:** "
-                    + " ".join(
-                        f'<span class="source-tag">{s}</span>' for s in sources
-                    ),
-                    unsafe_allow_html=True,
-                )
-
-        st.session_state.chat_history.append(
-            {"question": question, "answer": answer, "sources": sources}
+        st.session_state.chat.append(
+            {"q": q, "a": answer, "sources": sources}
         )
