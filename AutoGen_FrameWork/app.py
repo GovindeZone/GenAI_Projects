@@ -1,106 +1,192 @@
+import asyncio
+import os
+
 import streamlit as st
-import pandas as pd
 
-from autogen_agentchat.agents import AssistantAgent, UserProxyAgent
 from autogen_agentchat.teams import RoundRobinGroupChat
-from autogen_core import CancellationToken
+from autogen_agentchat.conditions import MaxMessageTermination
 
-from config import llm_config
+from agents import (
+    create_analyst,
+    create_finance,
+)
 
-
-# -----------------------------
-# UI SETUP
-# -----------------------------
-st.set_page_config(page_title="AutoGen Business Report", layout="wide")
-
-st.title("📊 AutoGen Business Report Generator")
-
-uploaded_file = st.file_uploader("Upload Sales Data (Excel)", type=["xlsx"])
+from utils.excel_reader import load_excel
+from utils.report_export import export_docx
 
 
-# -----------------------------
-# LOAD DATA
-# -----------------------------
+# ----------------------------------
+# PAGE CONFIG
+# ----------------------------------
+
+st.set_page_config(
+    page_title="AI Business Report Generator",
+    layout="wide"
+)
+
+st.title("📊 AI Multi-Agent Business Report Generator")
+
+
+# ----------------------------------
+# HELPER FUNCTIONS
+# ----------------------------------
+
+def clean_report_text(text: str) -> str:
+    """
+    Clean LLM output to avoid Streamlit markdown/math formatting issues.
+    """
+
+    if not text:
+        return ""
+
+    text = text.replace("\\(", "")
+    text = text.replace("\\)", "")
+    text = text.replace("\\[", "")
+    text = text.replace("\\]", "")
+    text = text.replace("$", "USD ")
+
+    return text
+
+
+def make_small_summary(df):
+    """
+    Creates small input for Groq token limits.
+    """
+
+    df_small = df.copy()
+
+    # Limit columns and rows
+    df_small = df_small.iloc[:, :8]
+    df_small = df_small.head(5)
+
+    # Limit long text inside cells
+    for col in df_small.columns:
+        df_small[col] = df_small[col].astype(str).str.slice(0, 40)
+
+    sample_data = df_small.to_csv(index=False)
+
+    numeric_summary = df.describe(include="number").round(2)
+
+    if not numeric_summary.empty:
+        numeric_text = numeric_summary.to_string()
+    else:
+        numeric_text = "No numeric columns available."
+
+    summary = f"""
+Rows: {len(df)}
+Columns: {len(df.columns)}
+Column Names: {", ".join(df.columns[:8])}
+
+Sample Data:
+{sample_data}
+
+Numeric Summary:
+{numeric_text}
+"""
+
+    return summary
+
+
+# ----------------------------------
+# FILE UPLOAD
+# ----------------------------------
+
+uploaded_file = st.file_uploader(
+    "Upload Excel File",
+    type=["xlsx"]
+)
+
 if uploaded_file:
 
-    df = pd.read_excel(uploaded_file)
+    df = load_excel(uploaded_file)
 
-    st.subheader("Preview Data")
+    st.subheader("Preview")
     st.dataframe(df.head())
 
+    st.write(f"Rows: {len(df)}")
+    st.write(f"Columns: {len(df.columns)}")
 
     if st.button("Generate Business Report"):
 
-        # -----------------------------
-        # AGENTS
-        # -----------------------------
+        summary_text = make_small_summary(df)
 
-        analyst = AssistantAgent(
-            name="Analyst",
-            model_client_config=llm_config,
-            system_message="You are a data analyst. Extract insights from sales data."
-        )
+        analyst = create_analyst()
+        finance = create_finance()
 
-        finance = AssistantAgent(
-            name="Finance",
-            model_client_config=llm_config,
-            system_message="You are a finance expert. Validate revenue, margins, anomalies."
-        )
-
-        writer = AssistantAgent(
-            name="Writer",
-            model_client_config=llm_config,
-            system_message="You are a business report writer. Write structured executive reports."
-        )
-
-        critic = AssistantAgent(
-            name="Critic",
-            model_client_config=llm_config,
-            system_message="You review reports for clarity, accuracy, and business tone."
-        )
-
-        user = UserProxyAgent(
-            name="User"
-        )
-
-        # -----------------------------
-        # TEAM (FIXED PART)
-        # -----------------------------
+        termination = MaxMessageTermination(max_messages=3)
 
         team = RoundRobinGroupChat(
-            participants=[user, analyst, finance, writer, critic]
+            participants=[
+                analyst,
+                finance,
+            ],
+            termination_condition=termination
         )
 
-        # -----------------------------
-        # PROMPT
-        # -----------------------------
-
         prompt = f"""
-You are given sales data.
+Use the business sales data summary below and create a concise business report.
 
-Task:
-1. Analyst → extract insights
-2. Finance → validate numbers
-3. Writer → create executive report
-4. Critic → improve final report
+IMPORTANT RULES:
+- Do not use LaTeX.
+- Do not use mathematical notation.
+- Do not use formulas.
+- Do not use dollar symbols.
+- Use USD instead of dollar symbols.
+- Write plain business English only.
+- Keep the response concise.
 
-DATA:
-{df.to_string(index=False)}
+DATA SUMMARY:
+{summary_text}
 
-Output:
-A structured business report with:
-- Summary
-- Key insights
-- Financial validation
-- Risks
-- Final recommendation
+TASK FLOW:
+
+Analyst:
+- Give 3 key insights.
+- Identify important trends.
+
+Finance:
+- Give 3 financial observations.
+- Identify risks or anomalies.
+
+FINAL OUTPUT FORMAT:
+
+# Executive Summary
+
+# Key Insights
+
+# Financial Observations
+
+# Risks
+
+# Recommendations
 """
 
-        # -----------------------------
-        # RUN (NEW STYLE)
-        # -----------------------------
+        async def run_team():
+            return await team.run(task=prompt)
 
-        result = team.run(task=prompt)
+        try:
+            with st.spinner("AI Agents are collaborating..."):
+                result = asyncio.run(run_team())
 
-        st.subheader("📄 Final Report")
-        st.write(result)
+            final_report = result.messages[-1].content
+            final_report = clean_report_text(final_report)
+
+            st.success("Business Report Generated")
+            st.markdown(final_report)
+
+            os.makedirs("output/reports", exist_ok=True)
+
+            output_file = "output/reports/Business_Report.docx"
+
+            export_docx(final_report, output_file)
+
+            with open(output_file, "rb") as file:
+                st.download_button(
+                    label="Download DOCX",
+                    data=file,
+                    file_name="Business_Report.docx"
+                )
+
+        except Exception as e:
+            st.error("Report generation failed.")
+            st.write(str(e))
