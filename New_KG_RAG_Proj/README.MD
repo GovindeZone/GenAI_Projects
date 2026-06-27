@@ -249,7 +249,7 @@ The rejection was confirmed by Manager B.
 
 ## Author
 
-Gnamachivayam
+Govindaraj namachivayam
 
 Finance Transformation | Data Analytics | AI Solutions | KG-RAG Applications
 
